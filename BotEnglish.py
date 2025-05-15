@@ -1,237 +1,281 @@
 import logging
 import random
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-from savol import questions
-import re
+import asyncio
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from savol import questions  # savol.py faylidan questions ro'yxatini import qilish
 
-# Логирование
-logging.basicConfig(level=logging.INFO)
+# Logging sozlamalari
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-user_data = {}
+# Asosiy menyuni inline klaviatura sifatida ko‘rsatish
+def get_main_menu():
+    keyboard = [
+        [InlineKeyboardButton("🚀 Bosh Menyu", callback_data="/start"), InlineKeyboardButton("🤝 Yordam", callback_data="/help")],
+        [InlineKeyboardButton("🧠 Testni boshlash", callback_data="/quiz"), InlineKeyboardButton("📊 Statistika", callback_data="/stats")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-# Парсинг одного вопроса
-def parse_question(q_text):
-    lines = q_text.strip().split('\n')
-    question = lines[0]
-    options = []
-    correct_answer_text = None
-
-    for line in lines[1:]:
-        line = line.strip()
-
-        # Определяем, правильный ли ответ
-        is_correct = '*' in line
-
-        # Удаляем *, если есть
-        line = line.replace('*', '').strip()
-
-        # Удаляем префиксы A), B), C), D) и т.п., если они есть
-        line = re.sub(r'^[A-Da-d]\)', '', line).strip()
-
-        if is_correct:
-            correct_answer_text = line
-
-        options.append(line)
-
-    return question, options, correct_answer_text
-
-# Команда /start
+# Start buyrug‘i: KI guruhiga xush kelibsiz xabari
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salom! Nechta test ishlamoqchisiz /test_5, /test_10, /test_25, /test_50, /test_100, /test_200 yoki hammasini /test_all testni boshlash uchun tanlang.")
-
-# Обработчик команд теста
-async def start_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    command = update.message.text
-    if command == "/test_5":
-        count = 5
-    elif command == "/test_10":
-        count = 10
-    elif command == "/test_25":
-        count = 25
-    elif command == "/test_50":
-        count = 50
-    elif command == "/test_100":
-        count = 100
-    elif command == "/test_200":
-        count = 200
+    user = update.effective_user
+    user_name = user.first_name if user.first_name else user.username if user.username else "Foydalanuvchi"
+    welcome_message = (
+        f"🇺🇿 Assalomu alaykum, {user_name}! KI guruhi a'zolari uchun Ingliz tili fanidan yakuniy imtihonga tayyorlanish botiga xush kelibsiz! 🎓\n\n"
+        "🔹 25 ta tasodifiy savoldan iborat test boshlash uchun Testni boshlash tugmasiga bosing\n"
+    )
+    query = update.callback_query
+    if query:
+        await query.message.reply_text(welcome_message, reply_markup=get_main_menu())
     else:
-        count = len(questions)
+        await update.message.reply_text(welcome_message, reply_markup=get_main_menu())
 
-    sample = random.sample(questions, min(count, len(questions)))
-    test_data = []
+# Yordam buyrug‘i
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_message = (
+        "📚 Bot yordami:\n\n"
+        "🔹 /start - Botni qayta ishga tushirish va xush kelibsiz xabarini ko‘rish\n"
+        "🔹 /quiz - 25 ta tasodifiy savoldan iborat test boshlash\n"
+        "🔹 /stats - Umumiy statistikangizni ko‘rish\n\n"
+        "Bot faqat kiritilgan 400 ta savoldan foydalanadi va har doim tasodifiy tartibda taqdim etadi."
+    )
+    query = update.callback_query
+    if query:
+        await query.message.reply_text(help_message, reply_markup=get_main_menu())
+    else:
+        await update.message.reply_text(help_message, reply_markup=get_main_menu())
 
-    for q in sample:
-        q_text, options, correct_text = parse_question(q)
-        random.shuffle(options)
-        test_data.append({
-            'text': q_text,
-            'options': options,
-            'correct': correct_text
-        })
+# Statistika buyrug‘i
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data = context.user_data.get('stats', {'tests': 0, 'total_correct': 0, 'best_score': 0})
+    tests = user_data['tests']
+    total_correct = user_data['total_correct']
+    best_score = user_data['best_score']
+    
+    if tests == 0:
+        message = "📊 Hozircha hech qanday statistika yo‘q. /quiz orqali testni boshlang!"
+    else:
+        avg_score = (total_correct / (tests * 25)) * 100 if tests > 0 else 0
+        message = (
+            f"📊 Sizning statistikangiz:\n\n"
+            f"🔢 Jami testlar soni: {tests}\n"
+            f"✅ Jami to‘g‘ri javoblar: {total_correct}/{(tests * 25)}\n"
+            f"📈 O‘rtacha ball: {avg_score:.2f}%\n"
+            f"🏆 Eng yaxshi natija: {best_score}/25\n\n"
+            f"🔄 Yana sinab ko‘rish uchun Testni boshlashni ni bosing!"
+        )
+    
+    query = update.callback_query
+    if query:
+        await query.message.reply_text(message, reply_markup=get_main_menu())
+    else:
+        await update.message.reply_text(message, reply_markup=get_main_menu())
 
-    user_data[update.effective_user.id] = {
-        'questions': test_data,
-        'current': 0,
-        'correct_answers': 0,
-        'answers': []
-    }
+# Quiz buyrug‘i: 25 ta savol
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(questions) < 25:
+        message = "❌ Savollar ro'yxati yetarli emas. Iltimos, savollar faylini tekshiring."
+        query = update.callback_query
+        if query:
+            await query.message.reply_text(message, reply_markup=get_main_menu())
+        else:
+            await update.message.reply_text(message, reply_markup=get_main_menu())
+        return
+    
+    context.user_data['index'] = 0
+    context.user_data['answers'] = []
+    context.user_data['shuffled'] = random.sample(questions, 25)  # 25 ta savol
+    query = update.callback_query
+    if query:
+        await query.message.reply_text("Quiz boshlandi!")
+        await send_question(query.message, context)
+    else:
+        await update.message.reply_text("Quiz boshlandi!")
+        await send_question(update.message, context)
 
-    await send_question(update, context)
-'''
-# Отправка текущего вопроса
-async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = user_data.get(update.effective_user.id)
-    if data is None:
+# Taymerni to‘xtatish
+def cancel_timer(context: ContextTypes.DEFAULT_TYPE):
+    if 'timer_task' in context.user_data:
+        context.user_data['timer_task'].cancel()
+        del context.user_data['timer_task']
+
+# Savol yuborish va taymerni boshlash
+async def send_question(message, context: ContextTypes.DEFAULT_TYPE):
+    index = context.user_data['index']
+    if index >= 25:  # 25 ta savoldan keyin yakunlash
+        correct = sum(1 for a in context.user_data['answers'] if a['is_correct'])
+        percentage = (correct / 25) * 100
+        summary = (
+            f"🏁 Test yakunlandi! Natija: {correct}/25 ({percentage:.2f}%)\n\n"
+            "📊 Statistika:\n"
+            f"✅ To‘g‘ri javoblar: {correct}\n"
+            f"❌ Noto‘g‘ri javoblar: {25 - correct}\n"
+            f"📈 Foiz: {percentage:.2f}%\n\n"
+            "📝 Har bir savol bo‘yicha xulosa:\n"
+        )
+        for i, a in enumerate(context.user_data['answers'], 1):
+            summary += (
+                f"{i}. {a['question']}\n"
+                f"✅ To‘g‘ri javob: {a['correct'].split(') ')[1]}\n"
+                f"{'✔️ Sizning javobingiz to‘g‘ri' if a['is_correct'] else f'❌ Sizning javobingiz: {a['user_answer']}'}\n\n"
+            )
+        summary += (
+            "🔄 Yana sinab ko‘rish uchun /quiz buyrug‘ini yuboring!\n"
+            "📊 Umumiy statistikani ko‘rish uchun /stats ni bosing."
+        )
+
+        # Statistika yangilash
+        user_data = context.user_data.get('stats', {'tests': 0, 'total_correct': 0, 'best_score': 0})
+        user_data['tests'] = user_data.get('tests', 0) + 1
+        user_data['total_correct'] = user_data.get('total_correct', 0) + correct
+        user_data['best_score'] = max(user_data.get('best_score', 0), correct)
+        context.user_data['stats'] = user_data
+
+        # Taymerni to‘xtatish
+        cancel_timer(context)
+
+        await message.reply_text(summary, reply_markup=get_main_menu())
         return
 
-    i = data['current']
-    if i >= len(data['questions']):
-        await show_results(update)
-        return
+    question = context.user_data['shuffled'][index]
+    context.user_data['current_question'] = question
+    lines = question.strip().split('\n')
+    text = lines[0]
+    options = lines[1:]
 
-    q = data['questions'][i]
-    options = q['options']
-    q_text = f"{i+1}) {q['text']}\n" + "\n".join([f"{chr(65 + idx)}) {opt}" for idx, opt in enumerate(options)])
-    keyboard = [[chr(65 + i)] for i in range(len(options))]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    # Variantlarni aralashtirish
+    correct_option = next(opt for opt in options if opt.startswith('*'))
+    correct_answer = correct_option.strip('*')[0]  # To‘g‘ri javob harfi
+    options_data = [(opt.strip('*')[2:].strip(), opt.startswith('*')) for opt in options]  # Harf va * olib tashlanadi
+    random.shuffle(options_data)  # Har safar variantlarni aralashtirish
+    context.user_data['current_options'] = options_data
+    context.user_data['correct_answer'] = correct_answer
 
-    # Устанавливаем таймер на 120 секунд, после чего автоматически перейдем к следующему вопросу
-    context.job_queue.run_once(timeout_handler, 120, data=update, name=f"timeout_{update.effective_user.id}")
-
-
-    await update.message.reply_text(q_text, reply_markup=reply_markup)
-'''
-# Вопрос с таймером на 60 секунд
-async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = user_data.get(update.effective_user.id)
-    if data is None:
-        return
-
-    i = data['current']
-    if i >= len(data['questions']):
-        await show_results(update)
-        return
-
-    q = data['questions'][i]
-    options = q['options']
-    q_text = f"{i+1}) {q['text']}\n" + "\n".join([f"{chr(65 + idx)}) {opt}" for idx, opt in enumerate(options)])
-    keyboard = [[chr(65 + i)] for i in range(len(options))]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-
-    # ❗ Удаляем предыдущую задачу, если она осталась
-    job_name = f"timeout_{update.effective_user.id}"
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    for job in current_jobs:
-        job.schedule_removal()
-
-    # ⏰ Устанавливаем таймер на 60 секунд
-    context.job_queue.run_once(timeout_handler, 60, data=update, name=job_name)
-
-    await update.message.reply_text(q_text, reply_markup=reply_markup)
-
-# Тайм-аут обработчик
-'''
-async def timeout_handler(context: ContextTypes.DEFAULT_TYPE):
-    update = context.job.data  # Получаем update из data
-    user_id = update.effective_user.id
-
-    if user_id in user_data:
-        data = user_data[user_id]
-        if data['current'] < len(data['questions']):
-            q = data['questions'][data['current']]
-            correct_letter = chr(65 + q['options'].index(q['correct']))
-            await update.message.reply_text(f"⏰ Vaqt tugadi! To‘g‘ri javob: {correct_letter}) {q['correct']}")
-            data['current'] += 1
-            await send_question(update, context)
-'''
-async def timeout_handler(context: ContextTypes.DEFAULT_TYPE):
-    update = context.job.data
-    user_id = update.effective_user.id
-
-    if user_id in user_data:
-        data = user_data[user_id]
-        if data['current'] < len(data['questions']):
-            q = data['questions'][data['current']]
-            correct_letter = chr(65 + q['options'].index(q['correct']))
-            await update.message.reply_text(f"⏰ Vaqt tugadi! To‘g‘ri javob: {correct_letter}) {q['correct']}")
-            data['current'] += 1
-            await send_question(update, context)
-
-
-# Обработка ответа пользователя
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    data = user_data.get(user_id)
-    if data is None:
-        await update.message.reply_text("Siz testni boshlamadingiz.")
-        return
-
-    user_answer_letter = update.message.text.upper()
-    i = data['current']
-    q = data['questions'][i]
+    # Inline klaviatura tugmalarini yaratish
+    keyboard = [[InlineKeyboardButton(opt[0], callback_data=f"answer_{i}")] for i, opt in enumerate(options_data)]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     try:
-        idx = ord(user_answer_letter) - 65
-        user_answer_text = q['options'][idx]
-    except (IndexError, TypeError):
-        await update.message.reply_text("Iltimos, A, B, C yoki D variantlarini tanlang.")
+        # Savolni yuborish va xabar ID sini saqlash
+        sent_message = await message.reply_text(
+            f"❓ Savol {index + 1}/25:\n{text}\n\n⏰ 2 daqiqa vaqtingiz bor!",
+            reply_markup=reply_markup
+        )
+        context.user_data['current_message_id'] = sent_message.message_id
+        context.user_data['current_chat_id'] = sent_message.chat_id
+
+        # Oldingi taymerni to‘xtatish
+        cancel_timer(context)
+
+        # Taymerni boshlash
+        async def timer():
+            try:
+                await asyncio.sleep(120)  # 2 daqiqa (120 soniya)
+                if 'current_question' in context.user_data:  # Savol hali faol bo‘lsa
+                    # Savolni o‘chirish
+                    try:
+                        await context.bot.delete_message(
+                            chat_id=context.user_data['current_chat_id'],
+                            message_id=context.user_data['current_message_id']
+                        )
+                    except Exception as e:
+                        logger.error(f"Xabarni o‘chirishda xato: {e}")
+
+                    context.user_data['index'] += 1
+                    context.user_data['answers'].append({
+                        'question': text,
+                        'correct': correct_option,
+                        'is_correct': False,
+                        'user_answer': "Vaqt tugadi"
+                    })
+                    await context.bot.send_message(
+                        chat_id=context.user_data['current_chat_id'],
+                        text="⏰ Vaqt tugadi! Keyingi savolga o‘tamiz."
+                    )
+                    await send_question(message, context)
+            except asyncio.CancelledError:
+                pass
+
+        context.user_data['timer_task'] = asyncio.create_task(timer())
+    except Exception as e:
+        logger.error(f"Savol yuborishda xato: {e}")
+        await message.reply_text("❌ Texnik xato yuz berdi. Iltimos, /quiz ni qayta ishlatib ko‘ring.", reply_markup=get_main_menu())
+
+# Inline tugma bosilganda javob qayta ishlash
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+
+    if data in ["/start", "/help", "/quiz", "/stats"]:
+        # Inline menyudan buyruqlarni ishga tushirish
+        if data == "/start":
+            await start(update, context)
+        elif data == "/help":
+            await help_command(update, context)
+        elif data == "/quiz":
+            await quiz(update, context)
+        elif data == "/stats":
+            await stats(update, context)
+        await query.answer()
         return
 
-    is_correct = user_answer_text == q['correct']
-    correct_letter = chr(65 + q['options'].index(q['correct']))
+    if data.startswith("answer_") and 'current_question' in context.user_data:
+        option_index = int(data.split("_")[1])
+        user_answer = context.user_data['current_options'][option_index][0]
+        is_correct = context.user_data['current_options'][option_index][1]
+        question = context.user_data['current_question']
+        correct_option = next(opt for opt in question.strip().split('\n')[1:] if opt.startswith('*'))
+        correct_text = correct_option.split(') ')[1]
 
-    data['answers'].append((q['text'], user_answer_letter, correct_letter))
-    if is_correct:
-        data['correct_answers'] += 1
-        await update.message.reply_text("✅ To'g'ri javob!")
+        # Taymerni to‘xtatish
+        cancel_timer(context)
+
+        # Javobni saqlash
+        context.user_data['answers'].append({
+            'question': question.strip().split('\n')[0],
+            'correct': correct_option,
+            'is_correct': is_correct,
+            'user_answer': user_answer
+        })
+        context.user_data['index'] += 1
+
+        # Foydalanuvchiga javob haqida xabar berish
+        if is_correct:
+            await query.message.reply_text("✅ To‘g‘ri javob! Keyingi savolga o‘ting.")
+        else:
+            await query.message.reply_text(f"❌ Noto‘g‘ri. To‘g‘ri javob: {correct_text}")
+
+        await query.answer()
+        await send_question(query.message, context)
     else:
-        await update.message.reply_text(f"❌ Xato javob! To'g'ri javob: {correct_letter}) {q['correct']}")
+        await query.message.reply_text("❓ Iltimos, avval /quiz buyrug‘ini ishlatib testni boshlang.", reply_markup=get_main_menu())
+        await query.answer()
 
-    data['current'] += 1
-    await send_question(update, context)
+# Xato boshqaruvi
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} xato keltirib chiqardi: {context.error}")
+    if update.message:
+        await update.message.reply_text("❌ Xato yuz berdi. Iltimos, qaytadan urinib ko‘ring yoki /help ni bosing.", reply_markup=get_main_menu())
+    elif update.callback_query:
+        await update.callback_query.message.reply_text("❌ Xato yuz berdi. Iltimos, qaytadan urinib ko‘ring yoki /help ni bosing.", reply_markup=get_main_menu())
 
-# Итоговые результаты
-async def show_results(update: Update):
-    data = user_data.get(update.effective_user.id)
-    result_lines = [
-        f"✅ To'g'ri javoblar: {data['correct_answers']} jami {len(data['questions'])} dan",
-        ""
-    ]
-    for i, (q, user_ans, correct_ans) in enumerate(data['answers']):
-        status = "✅" if user_ans == correct_ans else "❌"
-        result_lines.append(f"{i+1}. {status} Siz tanladingiz: {user_ans}, To'g'risi: {correct_ans}")
-    await update.message.reply_text("\n".join(result_lines))
-
-# Команда /stop
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot to'xtadi.")
-    await context.application.shutdown()
-
-# Запуск бота
+# Asosiy funksiya
 def main():
-    app = ApplicationBuilder().token("7624195497:AAGv--qJThE2gV9jlnVj2HE4wqTDygZERd0").build()
-
-    # Обработчики команд
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("test_5", start_test))
-    app.add_handler(CommandHandler("test_10", start_test))
-    app.add_handler(CommandHandler("test_25", start_test))
-    app.add_handler(CommandHandler("test_50", start_test))
-    app.add_handler(CommandHandler("test_100", start_test))
-    app.add_handler(CommandHandler("test_200", start_test))
-    app.add_handler(CommandHandler("test_all", start_test))
-    app.add_handler(CommandHandler("stop", stop))
-
-    # Обработчик для текстовых сообщений
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer))
-
-    app.run_polling()
-
-# Обязательная инициализация JobQueue
-async def post_init(app):
-    app.job_queue.set_application(app)
-
+    try:
+        app = ApplicationBuilder().token("7624195497:AAGv--qJThE2gV9jlnVj2HE4wqTDygZERd0").build()
+        
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("quiz", quiz))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CallbackQueryHandler(handle_callback))
+        app.add_error_handler(error_handler)
+        
+        logger.info("Bot muvaffaqiyatli ishga tushdi")
+        app.run_polling()
+    except Exception as e:
+        logger.critical(f"Botni ishga tushirishda xato: {e}")
 
 if __name__ == "__main__":
     main()
